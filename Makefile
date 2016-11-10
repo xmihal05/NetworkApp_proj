@@ -1,13 +1,13 @@
 # Makefile for FTP project
 CC = g++
 CFLAGS = -Wall -pedantic -Wextra
-PROJECT = proj.cpp
+SRC = proj.cpp proj.hh
 RESULT = fclient
-#LOGIN = xmihal05
+#LOGIN = 
 #FILES = Makefile proj.cpp README manual.pdf
 
 $(RESULT): $(PROJECT)
-	$(CC) $(CFLAGS) $(PROJECT) -o $(RESULT)
+	$(CC) $(CFLAGS) $(SRC) -o $(RESULT)
 
 clean:
 	rm -f *~
