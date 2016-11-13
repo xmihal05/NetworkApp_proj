@@ -33,6 +33,15 @@ void exitFunc(int code){
 		case 5:
 			cout << "Login file couldn't be opened or is not valid\n";
 			exit(1);
+		case 6:
+			cout << "Socket create error\n";
+			exit(1);
+		case 7:
+			cout << "inet_pton error\n";
+			exit(1);
+		case 8:
+			cout << "Could not connect to server\n";
+			exit(1);
 		default:
 			cout << "cant you even use your own function!? dumbass!! -_-\n";
 			exit(1);
@@ -81,7 +90,10 @@ int optParser(int argc, char *argv[]){
 	else{
 		bool fp = false;
 		bool is_number = false;
-		int opt, csf, cpa,req, path = 0;	//csf,cpa - counter for determination double use or wrong combination of options
+		int opt, csf = 0;	//csf,cpa - counter for determination double use or wrong combination of options
+		int req = 0;
+		int path = 0;
+		int cpa = 0;
 			// req counts required arguments; path - checks if path wasnt stated more than once
 		/*getopt learned from site - https://linux.die.net/man/3/getopt */
 		while((opt = getopt(argc, argv, "hs:c:a:pu:d:r:P")) != -1){
@@ -101,6 +113,7 @@ int optParser(int argc, char *argv[]){
 					break;
 				case 'a':
 					cpa++;
+					active = true;
 					sport = optarg;
 					is_number = (sport.find_first_not_of( "0123456789" ) == string::npos); //check if string does contain NAN character
 					if (is_number)
@@ -141,7 +154,7 @@ int optParser(int argc, char *argv[]){
 			exitFunc(4);
 	}
 
-	return 1;
+	return 0;
 }
 //function for login
 void getLogInf(){
@@ -170,13 +183,49 @@ void getLogInf(){
 	} 
 }
 
+int srvConnect(struct sockaddr_in address){
+	int sfd, i;
+	char buffer[256];
+	bool not_domainN = false;
+
+	sfd = socket(AF_INET, SOCK_STREAM, 0);	
+	if(sfd < 0)		//could not open socket - exit with error
+		exitFunc(6);
+
+	bzero((char *) &address, sizeof(address));	//memory init - sets all values to zero
+	address.sin_family = AF_INET;
+	if (!active)	
+		address.sin_port = htons(21);	//pasivny mod alebo nie je urceny - pouzijeme pasivny
+	else address.sin_port = htons(port);	//pri aktivnom mode pouzijeme predany port
+
+	string srv_str(server_no);	//cast char * to string
+	not_domainN = (srv_str.find_first_not_of( ".0123456789" ) == string::npos); //check if domain name or ip address was used
+	if(not_domainN){
+		cout << "is ip address\n";
+		if(inet_pton(AF_INET, server_no, &address.sin_addr) <= 0) //stores ip address
+			exitFunc(7);	//could not be stored - exit with errors			
+	}
+	else //domain name of server used instead of ip address
+		cout << "is domain name\n";
+
+	//connect to server
+	if(connect(sfd, (struct sockaddr *)&address, sizeof(address)) < 0){
+		cout << "connect: " << strerror(1) << "\n";
+		exitFunc(8);	//if connection cant be established - exit with error
+	}
+
+
+	return 0;
+}
+
+
 /****************************************	MAIN 	****************************************/
 
 int main(int argc, char *argv[]){
 
+	struct sockaddr_in srv_addr;
+
 	optParser(argc,argv);
-
-
 	//open input file containing autentization details
 	log_file.open(lfile, ios::in);
 	if (!log_file.is_open())	//throw error if file couldnt open
@@ -184,6 +233,9 @@ int main(int argc, char *argv[]){
 
 	getLogInf(); //get login info
 	//structure login now holds login informations
+
+	//connect to server
+	srvConnect(srv_addr);
 
 
 

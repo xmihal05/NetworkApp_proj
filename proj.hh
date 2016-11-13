@@ -9,6 +9,13 @@
 #include <fstream>
 #include <sstream>
 
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <netdb.h>
+#include <arpa/inet.h>
+
+
 using namespace std;
 
 //global variables
@@ -19,6 +26,7 @@ int port = 0;
 char *searched_file = NULL;
 char *file_path = NULL;
 bool passive = false;
+bool active = false;
 bool rmv = false;
 bool dwld = false;
 bool upld = false;
@@ -34,3 +42,4 @@ void exitFunc(int code);
 void printHelp();
 int optParser(int argc, char *argv[]);
 void getLogInf();
+int srvConnect(struct sockaddr_in address);
