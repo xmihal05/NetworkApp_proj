@@ -11,9 +11,11 @@
 
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <sys/sendfile.h>
 #include <netinet/in.h>
 #include <netdb.h>
 #include <arpa/inet.h>
+#include <unistd.h>
 
 
 using namespace std;
@@ -22,8 +24,8 @@ using namespace std;
 char *server_no = NULL;
 char *lfile =  NULL;
 string sport;
-int port = 0;
-char *searched_file = NULL;
+int data_port = 0;
+string searched_file;
 char *file_path = NULL;
 bool passive = false;
 bool active = false;
@@ -38,8 +40,16 @@ struct login_info
 	string psswd;
 } login;
 
-void exitFunc(int code);
+struct dataSrvInfo
+{
+	char addr[15];
+	int port;
+} psvData;
+
+void exitFunc(int number, string output);
 void printHelp();
 int optParser(int argc, char *argv[]);
 void getLogInf();
-int srvConnect(struct sockaddr_in address);
+int srvCommConnect();
+void pasvDataConnect(struct hostent *name, int socfd);
+int recvMsg(int sockfd, void *buf);
