@@ -5,50 +5,22 @@
 
 #include "proj.hh"
 
+#define CM_PORT 21		//port for FTP command flow
+#define B_SIZE 1024		//size of buffer for messages received from server
+#define M_SIZE 250		//size of messages send to server from client
+#define M_SIZE_SHORT 20 //size of short messages send to server from client
+
 using namespace std;
 
 /*Function for exiting - prints out code and possibly error message*/
-void exitFunc(int code){
+void exitFunc(int number, string output){
 
 	/* close login file before exit */	
 	if(log_file.is_open())
 		log_file.close();
 
-	switch(code){
-		case 0:
-			cout << "everything went smoothly\n";
-			exit(0);
-		case 1:
-			cout << "Wrong use of parameters! Run ./fclien -h for help.\n";
-			exit(1);
-		case 2:
-			cout << "Couldn't open login file\n";
-			exit(1);
-		case 3:
-			cout << "Port number is not valid\n";
-			exit(1);
-		case 4:
-			cout << "Use of uncombinable options or multiple use of any! Run ./fclien -h for help\n";
-			exit(1);
-		case 5:
-			cout << "Login file couldn't be opened or is not valid\n";
-			exit(1);
-		case 6:
-			cout << "Socket create error\n";
-			exit(1);
-		case 7:
-			cout << "inet_pton error\n";
-			exit(1);
-		case 8:
-			cout << "Could not connect to server\n";
-			exit(1);
-		default:
-			cout << "cant you even use your own function!? dumbass!! -_-\n";
-			exit(1);
-		/*case 0:
-			cout << "";
-			exit();*/
-	}
+		cout << output;
+		exit(number);
 }
 
 /* Prints help message when -h option is used */
@@ -83,10 +55,10 @@ int optParser(int argc, char *argv[]){
 
 	//too many options used on input
 	if(argc > 11)
-		exitFunc(1);
+		exitFunc(1, "Wrong use of parameters! Run ./fclien -h for help.\n");
 	//required options werent used
 	else if(argc < 5 && strcmp(argv[1],"-h") != 0)
-		exitFunc(1);
+		exitFunc(1, "Wrong use of parameters! Run ./fclien -h for help.\n");
 	else{
 		bool fp = false;
 		bool is_number = false;
@@ -100,9 +72,9 @@ int optParser(int argc, char *argv[]){
 			switch(opt){
 				case 'h':
 					if (argc != 2)
-						exitFunc(1);
+						exitFunc(1, "Wrong use of parameters! Run ./fclien -h for help.\n");
 					printHelp();
-					exitFunc(0);
+					exitFunc(0, "everything went smoothly\n");
 				case 's':
 					req++;
 					server_no = optarg; /*saves server address or domain name*/
@@ -117,8 +89,8 @@ int optParser(int argc, char *argv[]){
 					sport = optarg;
 					is_number = (sport.find_first_not_of( "0123456789" ) == string::npos); //check if string does contain NAN character
 					if (is_number)
-						port = atoi(sport.c_str());	//converts string to int
-					else exitFunc(3); //strin isnt an integer, exits with error					
+						data_port = atoi(sport.c_str());	//converts string to int
+					else exitFunc(1, "Port number is not valid\n"); //strin isnt an integer, exits with error					
 					break;
 				case 'p':
 					cpa++;
@@ -145,77 +117,250 @@ int optParser(int argc, char *argv[]){
 					file_path = optarg; /*saves path to a searched file*/
 					break;
 				default:
-					exitFunc(1);
+					exitFunc(1, "Wrong use of parameters! Run ./fclien -h for help.\n");
 			}
 		}
 
 		/*if any parameter was used more than once, or uncombinable were combined - exit with error*/
 		if (csf > 1 || cpa > 1 || (csf == 0 && fp) || (path > 1) || (server_no == NULL) || (lfile == NULL) || (req > 2))
-			exitFunc(4);
+			exitFunc(1, "Use of uncombinable options or multiple use of any! Run ./fclien -h for help\n");
 	}
 
-	return 0;
+	return 1;
 }
 //function for login
 void getLogInf(){
 	string line, tmp1,tmp2;
-	int i;
+	int i = 0;
 
 	while(getline(log_file, line)){
 		i++;
-		if (i > 2)	// login file has more than two expected rows
-			exitFunc(5);
+		if (i > 2)
+			exitFunc(1, "Login file couldn't be opened or is not valid\n");	// login file has more than two expected rows
+			
 		tmp1 = line.substr(0,10);
 		tmp2 = line.substr (10);
-		if (tmp2.compare("") == 0)	//string is empty
-			exitFunc(5);
+
+		if (tmp2.compare("") == 0) //string is empty
+			exitFunc(1, "Login file couldn't be opened or is not valid\n");
 
 		if (i==1){	//first line of login file holds username
-			if (tmp1.compare("username: ") != 0) 	
-				exitFunc(5);	//login file is not valid
+			if (tmp1.compare("username: ") != 0)
+				exitFunc(1, "Login file couldn't be opened or is not valid\n");	//login file is not valid
 			else login.uname = tmp2;
 		}
 		else{ //second line of login file holds password
-			if (tmp1.compare("password: ") != 0)	
-				exitFunc(5);	//login file is not valid
+			if (tmp1.compare("password: ") != 0)
+				exitFunc(1, "Login file couldn't be opened or is not valid\n");	//login file is not valid
 			else login.psswd = tmp2;
 		}
 	} 
 }
 
-int srvConnect(struct sockaddr_in address){
-	int sfd, i;
-	char buffer[256];
-	bool not_domainN = false;
+int recvMsg(int sockfd, void *buf){
+	int code, tmp;
+	string code_str;	
+
+	//save message received from server into buffer
+	if((tmp = recv(sockfd, buf, B_SIZE, 0)) < 0)
+			exitFunc(1, "Error on receive\n");
+	/*while(tmp > 0){
+		if((tmp = recv(sockfd, buf, B_SIZE, 0)) < 0)
+			exitFunc(13);
+	}		SPOJAZDNIT WHILE NESKOR!!! */	
+
+	//cast buffer from void * to string
+	string msg_str(static_cast<const char*>(buf));
+	//get code from message and cast it to int
+	code_str = msg_str.substr(0,3);
+	code = atoi(code_str.c_str());
+
+	//extracts port number from "Entering passive mode" message
+	if(code == 227){
+		string psv_str;
+		int ip1,ip2,ip3,ip4,port1, port2;
+		//saves ip address
+		psv_str = msg_str.substr(26);
+		//inspired by stackoverflow.com/questions/33245774/simple-ftp-client-c
+		sscanf(psv_str.c_str(), "(%d,%d,%d,%d,%d,%d)", &ip1, &ip2, &ip3, &ip4, &port1, &port2);	
+		//calculate port number for passive data connection
+		psvData.port = (port1*256) + port2;
+		//store ip address for passive data connection
+		sprintf(psvData.addr, "%d.%d.%d.%d", ip1, ip2, ip3, ip4);
+	}
+
+	return code;
+}
+
+void pasvDataConnect(struct hostent *name, int cSfd){
+	int dSfd, msg_code;
+	char buf[B_SIZE] = {0};
+	struct sockaddr_in dataAddr;
+	string rfile = "RETR "+searched_file+"\r\n";
+	string sfile = "STOR "+searched_file+"\r\n";
+
+	char mStor[M_SIZE] = {0};
+	char mRet[M_SIZE] = {0};
+	char message[M_SIZE] = {0};
+	char mNLst[M_SIZE_SHORT] = {0};
+
+	strncpy(message, "tu je nejaka sprava\r\n", sizeof(message));
+	strncpy(mStor, sfile.c_str(), sizeof(mStor));
+	strncpy(mRet, rfile.c_str(), sizeof(mRet));
+	strncpy(mNLst, "NLST\r\n", sizeof(mNLst));
+
+	if((dSfd = socket(AF_INET, SOCK_STREAM, 0)) < 0)
+		exitFunc(1, "Data socket create error\n");
+	bzero((char *) &dataAddr, sizeof(dataAddr));	//memory init - sets all values to zero
+	dataAddr.sin_family = AF_INET;
+	dataAddr.sin_port = htons(psvData.port);
+	bcopy((char *)name->h_addr, (char *)&dataAddr.sin_addr.s_addr, name->h_length);
+
+	//connect to server on data channel
+	if(connect(dSfd, (struct sockaddr *)&dataAddr, sizeof(dataAddr)) < 0){
+		cout << "connect: " << strerror(1) << "\n";
+		exitFunc(1, "Failed to connect to a server\n");	//if connection cant be established - exit with error
+	}
+
+	//upload file to server
+	if(upld){
+		//send STOR command to communication channel
+		if(send(cSfd, mStor, strlen(mStor),0) < 0){
+			cout << "Storee send on connection channel: " << strerror(1) << "\n";
+			exitFunc(1, "Server error on sending STOR on CCH\n");
+		}
+		//send file via data channel
+		if(send(dSfd, message, strlen(message), 0) < 0){
+			cout << "Storee send on data channel: " << strerror(1) << "\n";
+			exitFunc(1, "Server error on sending STOR on DCH\n");
+		}
+	}
+	//download file from server
+	else if(dwld){
+		//send RETR command to communication channel
+		if(send(cSfd, mRet, strlen(mRet),0) < 0){
+			cout << "Retr send on connection channel: " << strerror(1) << "\n";
+			exitFunc(1, "Server error on sending RETR on CCH\n");
+		}
+		//download file from server via data channel
+		if(send(dSfd, message, strlen(message), 0) < 0){
+			cout << "Retr send on data channel: " << strerror(1) << "\n";
+			exitFunc(1, "Server error on sending RETR on DCH\n");
+		}
+	}
+	//print out all the directories and subdirectories
+	else{
+		if(send(cSfd, mNLst, strlen(mNLst),0) < 0){
+			cout << "NLST send on connection channel: " << strerror(1) << "\n";
+			exitFunc(1, "Server error on sending NLST on CCH\n");
+		}
+	}
+
+	//receive return code from server
+	msg_code = recvMsg(cSfd, buf);
+	if(msg_code != 150){
+		exitFunc(1, "File transfer with errors\n");
+	}
+	close(dSfd);	//close socket for data channel
+	cout << msg_code << endl;
+
+	msg_code = recvMsg(cSfd, buf);	//wait for the transfer succesfull message
+
+	cout << msg_code << endl;
+	if(msg_code != 226)
+		exitFunc(1, "File transfer with errors\n");
+}
+
+int srvCommConnect(){
+	struct sockaddr_in address;
+	struct hostent *name;
+	int sfd, msg_code;
+	char buffer[B_SIZE] = {0};
+
+	string dfile = "DELE "+searched_file+"\r\n";
+	string usrstr = "USER "+login.uname+"\r\n";
+	string pswstr = "PASS "+login.psswd+"\r\n";
+
+	//initialize arrays
+	char mDel[M_SIZE] = {0};
+	char mUser[M_SIZE] = {0};
+	char mPass[M_SIZE] = {0};
+	char mPasv[M_SIZE_SHORT] = {0};
+	char mQuit[M_SIZE_SHORT] = {0};
+	//fill arrays with proper info
+	strncpy(mDel, dfile.c_str(), sizeof(mDel));
+	strncpy(mUser, usrstr.c_str(), sizeof(mUser));
+	strncpy(mPass, pswstr.c_str(), sizeof(mPass));
+	strncpy(mPasv, "PASV\r\n", sizeof(mPasv));
+	strncpy(mQuit, "QUIT\r\n", sizeof(mQuit));
 
 	sfd = socket(AF_INET, SOCK_STREAM, 0);	
 	if(sfd < 0)		//could not open socket - exit with error
-		exitFunc(6);
+		exitFunc(1, "Socket create error\n");
 
 	bzero((char *) &address, sizeof(address));	//memory init - sets all values to zero
-	address.sin_family = AF_INET;
-	if (!active)	
-		address.sin_port = htons(21);	//pasivny mod alebo nie je urceny - pouzijeme pasivny
-	else address.sin_port = htons(port);	//pri aktivnom mode pouzijeme predany port
 
-	string srv_str(server_no);	//cast char * to string
-	not_domainN = (srv_str.find_first_not_of( ".0123456789" ) == string::npos); //check if domain name or ip address was used
-	if(not_domainN){
-		cout << "is ip address\n";
-		if(inet_pton(AF_INET, server_no, &address.sin_addr) <= 0) //stores ip address
-			exitFunc(7);	//could not be stored - exit with errors			
-	}
-	else //domain name of server used instead of ip address
-		cout << "is domain name\n";
+	address.sin_family = AF_INET;
+	address.sin_port = htons(CM_PORT);	//connect to port 21 for command flow
+	
+	if((name = gethostbyname(server_no)) == NULL)	//get ip address to connect to a server
+		exitFunc(1, "gethostbyname error\n");	//exit with errorS
+	address.sin_addr = *((struct in_addr *)name->h_addr); 
+	//}
 
 	//connect to server
 	if(connect(sfd, (struct sockaddr *)&address, sizeof(address)) < 0){
 		cout << "connect: " << strerror(1) << "\n";
-		exitFunc(8);	//if connection cant be established - exit with error
+		exitFunc(1, "Failed to connect to a server\n");	//if connection cant be established - exit with error
+	}
+	msg_code = recvMsg(sfd, buffer);
+	if((msg_code != 120) && (msg_code != 220))
+		exitFunc(1, "Connection wasn't established\n");
+
+	//send username &  password for loging to a server
+	if(send(sfd, mUser, strlen(mUser),0) < 0){
+		cout << "username send: " << strerror(1) << "\n";
+		exitFunc(1, "Server error on sending USER\n");
+	}
+	msg_code = recvMsg(sfd, buffer);
+	if((msg_code != 230) && (msg_code != 331))
+		exitFunc(1, "Wrong user name or password\n");
+	//send password only if it is needed
+	if(msg_code == 331){
+		if(send(sfd, mPass, strlen(mPass),0) < 0){
+			cout << "password send: " << strerror(1) << "\n";
+			exitFunc(1, "Server error on sending PASS\n");
+		}
+		msg_code = recvMsg(sfd, buffer);
+		if(msg_code != 230)
+			exitFunc(1, "Wrong user name or password\n");
 	}
 
+	//if active mode wasnt chosen work in passive
+	if (!active){
+		if(send(sfd, mPasv, strlen(mPasv),0) < 0){
+		cout << "Passive mode message send: " << strerror(1) << "\n";
+		exitFunc(1, "PASV wasnt send correctly \n");
+		}
+		msg_code = recvMsg(sfd, buffer);
+		if(msg_code != 227)
+			exitFunc(1, "Could not enter passive mode\n");
+		//establish data connection in passive mode
+		pasvDataConnect(name, sfd);
+	}
 
-	return 0;
+	if(send(sfd, mQuit, strlen(mQuit),0) < 0){
+		cout << "Logging out: " << strerror(1) << "\n";
+		exitFunc(1, "QUIT wasnt send correctly \n");
+	}
+	msg_code = recvMsg(sfd, buffer);
+	if(msg_code != 221)
+		exitFunc(1, "Failed to close connection \n");
+	//close socket
+	close(sfd);
+
+
+	return 1;
 }
 
 
@@ -223,21 +368,30 @@ int srvConnect(struct sockaddr_in address){
 
 int main(int argc, char *argv[]){
 
-	struct sockaddr_in srv_addr;
+	ifstream file;
 
 	optParser(argc,argv);
 	//open input file containing autentization details
 	log_file.open(lfile, ios::in);
 	if (!log_file.is_open())	//throw error if file couldnt open
-		exitFunc(5);
+		exitFunc(1, "Login file couldn't be opened or is not valid\n");
 
 	getLogInf(); //get login info
 	//structure login now holds login informations
 
+	//check if file for upload exists and is valid file
+	if(upld){		
+		file.open(searched_file.c_str(), ios::in);
+		if(!file.is_open()){
+			exitFunc(1, "Searched file is not valid file\n");
+		}
+		file.close();
+	}
+
 	//connect to server
-	srvConnect(srv_addr);
+	srvCommConnect();
 
 
 
-	exitFunc(0);
+	exitFunc(0,"everything went smoothly\n");
 }
