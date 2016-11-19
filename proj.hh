@@ -7,15 +7,20 @@
 #include <string>
 #include <getopt.h>
 #include <fstream>
+#include <fcntl.h>
 #include <sstream>
+#include <algorithm>
 
 #include <sys/types.h>
 #include <sys/socket.h>
-#include <sys/sendfile.h>
+#include <sys/un.h>
+#include <sys/sendfile.h>	//upload file to server
+#include <sys/stat.h>	//for getting file size
 #include <netinet/in.h>
 #include <netdb.h>
 #include <arpa/inet.h>
 #include <unistd.h>
+#include <ifaddrs.h>
 
 
 using namespace std;
@@ -51,5 +56,6 @@ void printHelp();
 int optParser(int argc, char *argv[]);
 void getLogInf();
 int srvCommConnect();
-void pasvDataConnect(struct hostent *name, int socfd);
+void pasvDataConnect(struct hostent *name, int cSfd, string path);
+void actDataConnect (int cSfd, string path);
 int recvMsg(int sockfd, void *buf);

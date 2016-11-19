@@ -60,7 +60,6 @@ int optParser(int argc, char *argv[]){
 	else if(argc < 5 && strcmp(argv[1],"-h") != 0)
 		exitFunc(1, "Wrong use of parameters! Run ./fclien -h for help.\n");
 	else{
-		bool fp = false;
 		bool is_number = false;
 		int opt, csf = 0;	//csf,cpa - counter for determination double use or wrong combination of options
 		int req = 0;
@@ -68,7 +67,7 @@ int optParser(int argc, char *argv[]){
 		int cpa = 0;
 			// req counts required arguments; path - checks if path wasnt stated more than once
 		/*getopt learned from site - https://linux.die.net/man/3/getopt */
-		while((opt = getopt(argc, argv, "hs:c:a:pu:d:r:P")) != -1){
+		while((opt = getopt(argc, argv, "hs:c:a:pu:d:r:P:")) != -1){
 			switch(opt){
 				case 'h':
 					if (argc != 2)
@@ -113,7 +112,6 @@ int optParser(int argc, char *argv[]){
 					break;
 				case 'P':
 					path++;
-					fp = true;
 					file_path = optarg; /*saves path to a searched file*/
 					break;
 				default:
@@ -122,7 +120,7 @@ int optParser(int argc, char *argv[]){
 		}
 
 		/*if any parameter was used more than once, or uncombinable were combined - exit with error*/
-		if (csf > 1 || cpa > 1 || (csf == 0 && fp) || (path > 1) || (server_no == NULL) || (lfile == NULL) || (req > 2))
+		if (csf > 1 || cpa > 1 || (csf == 0 && (path > 0)) || (path > 1) || (server_no == NULL) || (lfile == NULL) || (req > 2))
 			exitFunc(1, "Use of uncombinable options or multiple use of any! Run ./fclien -h for help\n");
 	}
 
@@ -163,11 +161,11 @@ int recvMsg(int sockfd, void *buf){
 
 	//save message received from server into buffer
 	if((tmp = recv(sockfd, buf, B_SIZE, 0)) < 0)
-			exitFunc(1, "Error on receive\n");
-	/*while(tmp > 0){
+			exitFunc(1, "Error on receive\n");/*
+	while(tmp > 0){
 		if((tmp = recv(sockfd, buf, B_SIZE, 0)) < 0)
-			exitFunc(13);
-	}		SPOJAZDNIT WHILE NESKOR!!! */	
+			exitFunc(1, "Error on receive\n");
+	}	*/
 
 	//cast buffer from void * to string
 	string msg_str(static_cast<const char*>(buf));
@@ -192,23 +190,60 @@ int recvMsg(int sockfd, void *buf){
 	return code;
 }
 
-void pasvDataConnect(struct hostent *name, int cSfd){
-	int dSfd, msg_code;
+/********************************************************************************************
+*********************************************************************************************
+*********************************************************************************************/
+
+void pasvDataConnect(struct hostent *name, int cSfd, string path){
+	int dSfd, msg_code, fd, filesize;
 	char buf[B_SIZE] = {0};
 	struct sockaddr_in dataAddr;
-	string rfile = "RETR "+searched_file+"\r\n";
-	string sfile = "STOR "+searched_file+"\r\n";
+	struct stat obj;
 
+	char setBinary[M_SIZE] = {0};
+	char file[B_SIZE] = {0};
 	char mStor[M_SIZE] = {0};
 	char mRet[M_SIZE] = {0};
-	char message[M_SIZE] = {0};
 	char mNLst[M_SIZE_SHORT] = {0};
 
-	strncpy(message, "tu je nejaka sprava\r\n", sizeof(message));
-	strncpy(mStor, sfile.c_str(), sizeof(mStor));
-	strncpy(mRet, rfile.c_str(), sizeof(mRet));
-	strncpy(mNLst, "NLST\r\n", sizeof(mNLst));
+	strncpy(setBinary, "TYPE I\r\n", sizeof(setBinary));	//set flag to binary
 
+	if(upld == true || dwld == true){
+		if(file_path != NULL){
+			if(upld){
+				string sfile;
+				sfile = "STOR "+path+searched_file+"\r\n"; //create stor command with path
+				strncpy(file, searched_file.c_str(), sizeof(file));
+				strncpy(mStor, sfile.c_str(), sizeof(mStor));
+			}
+			else{	
+				string rfile;
+				rfile = "RETR "+searched_file+"\r\n";
+
+				string tmp_str;
+				tmp_str = path+searched_file;
+				strncpy(file, tmp_str.c_str(), sizeof(file));
+				strncpy(mRet, rfile.c_str(), sizeof(mRet));
+			}
+		}		
+		else{
+			if(upld){
+				string sfile;
+				sfile = "STOR "+searched_file+"\r\n"; //store command without path
+				strncpy(mStor, sfile.c_str(), sizeof(mStor));
+			}
+			else{
+				string rfile;
+				rfile = "RETR "+searched_file+"\r\n";
+				strncpy(mRet, rfile.c_str(), sizeof(mRet));
+			}
+			strncpy(file, searched_file.c_str(), sizeof(file));			
+		}
+	}
+	else
+		strncpy(mNLst, "NLST\r\n", sizeof(mNLst));
+
+	//create data socket
 	if((dSfd = socket(AF_INET, SOCK_STREAM, 0)) < 0)
 		exitFunc(1, "Data socket create error\n");
 	bzero((char *) &dataAddr, sizeof(dataAddr));	//memory init - sets all values to zero
@@ -222,64 +257,252 @@ void pasvDataConnect(struct hostent *name, int cSfd){
 		exitFunc(1, "Failed to connect to a server\n");	//if connection cant be established - exit with error
 	}
 
+	//Turn the binary flag on
+	if(send(cSfd, setBinary, strlen(setBinary), 0) < 0){		
+			cout << "Set binary: " << strerror(1) << "\n";
+			exitFunc(1, "Setting binary flag on failed\n");
+	}
+	msg_code = recvMsg(cSfd, buf);
+	if(msg_code != 200)
+		exitFunc(1, "Could not set binary flag on\n");
+
+	/****************************************************************************************/
 	//upload file to server
 	if(upld){
+		//INSPIRED BY: http://armi.in/wiki/FTP_Server_and_Client_Implementation_in_C/C%2B%2B
+		//check if file for upload exists and is valid file
+		fd = open(file, O_RDONLY);	//SKUSIT PRIDAT NEJAKU PERMISSION!!!
+		if(fd < 0){
+			exitFunc(1, "Searched file is not valid file or does not exists\n");
+		}
+
 		//send STOR command to communication channel
 		if(send(cSfd, mStor, strlen(mStor),0) < 0){
 			cout << "Storee send on connection channel: " << strerror(1) << "\n";
+			close(fd);
 			exitFunc(1, "Server error on sending STOR on CCH\n");
 		}
+		//get size of a file
+		stat(file, &obj);	
+		filesize = obj.st_size;
 		//send file via data channel
-		if(send(dSfd, message, strlen(message), 0) < 0){
-			cout << "Storee send on data channel: " << strerror(1) << "\n";
-			exitFunc(1, "Server error on sending STOR on DCH\n");
+		if(sendfile(dSfd, fd, NULL, filesize) < 0){			
+			cout << "Sending file via data channel: " << strerror(1) << "\n";
+			close(fd);
+			exitFunc(1, "Error on sending file via data channel\n");
 		}
+		close(fd);
+
+		//receive return code from server
+		msg_code = recvMsg(cSfd, buf);
+		if(msg_code != 150){
+			exitFunc(1, "File transfer with errors - did not receive 150\n");
+		}
+		close(dSfd);	//close socket for data channel
+
+		msg_code = recvMsg(cSfd, buf);	//wait for the transfer succesfull message
+		if(msg_code != 226)
+			exitFunc(1, "File transfered with errors - did not receive 226\n");
 	}
+
+	/****************************************************************************************/
 	//download file from server
 	else if(dwld){
+		//INSPIRED BY: http://armi.in/wiki/FTP_Server_and_Client_Implementation_in_C/C%2B%2B
 		//send RETR command to communication channel
 		if(send(cSfd, mRet, strlen(mRet),0) < 0){
 			cout << "Retr send on connection channel: " << strerror(1) << "\n";
 			exitFunc(1, "Server error on sending RETR on CCH\n");
 		}
 		//download file from server via data channel
-		if(send(dSfd, message, strlen(message), 0) < 0){
-			cout << "Retr send on data channel: " << strerror(1) << "\n";
-			exitFunc(1, "Server error on sending RETR on DCH\n");
+		if(recv(dSfd, &filesize, sizeof(int), 0) < 0){
+			cout << "Getting download file size: " << strerror(1) << "\n";
+			exitFunc(1, "Specified file doesn't exist in stated directory\n");
 		}
+		//read file into buffer
+		if(recv(cSfd, buf, B_SIZE, 0) < 0){
+			cout << "Downloading file: " << strerror(1) << "\n";
+			exitFunc(1, "Failed to receive file\n");			
+		}
+		//problem s permission?! who knows... -_-
+		if((fd = open(file, O_CREAT | O_EXCL | O_WRONLY, 0666)) < 0){	//open file for write only
+			exitFunc(1, "Could not open file for download\n");
+		}
+		write(fd, buf, filesize);	//write to a file
+		close(fd);	//close file
+		close(dSfd);	//close data channel
+
+		msg_code = recvMsg(cSfd, buf);	//wait for the transfer succesfull message
+		if(msg_code != 226)
+			exitFunc(1, "File transfered with errors - did not receive 226\n");
 	}
+
+	/****************************************************************************************/
 	//print out all the directories and subdirectories
-	else{
+	else if((upld == false)&&(dwld == false)&&(rmv == false)){
+		//INSPIRED BY: http://armi.in/wiki/FTP_Server_and_Client_Implementation_in_C/C%2B%2B
 		if(send(cSfd, mNLst, strlen(mNLst),0) < 0){
 			cout << "NLST send on connection channel: " << strerror(1) << "\n";
 			exitFunc(1, "Server error on sending NLST on CCH\n");
 		}
+		msg_code = recvMsg(cSfd, buf);
+		if (msg_code == 150)
+			exitFunc(1, "NLST exits with errors\n");
+
+		if(recv(dSfd, buf, B_SIZE, 0) < 0){
+			cout << "Downloading list of directories: " << strerror(1) << "\n";
+			exitFunc(1, "Failed to get directories\n");
+		}
+
+		if((fd = open("tmp.txt", O_WRONLY)) < 0)
+			exitFunc(1, "Couldnt open temporary file for directory list\n");
+		//copy received message into temporary file
+		write(fd, buf, sizeof(buf));
+		close(fd);
+		system("cat tmp.txt");
 	}
-
-	//receive return code from server
-	msg_code = recvMsg(cSfd, buf);
-	if(msg_code != 150){
-		exitFunc(1, "File transfer with errors\n");
-	}
-	close(dSfd);	//close socket for data channel
-	cout << msg_code << endl;
-
-	msg_code = recvMsg(cSfd, buf);	//wait for the transfer succesfull message
-
-	cout << msg_code << endl;
-	if(msg_code != 226)
-		exitFunc(1, "File transfer with errors\n");
+	/****************************************************************************************/
 }
 
+/********************************************************************************************
+*********************************************************************************************
+*********************************************************************************************/
+void actDataConnect (int cSfd, string path){
+	const char *ipaddr, *ifname = "eth0";	
+	char mPort[M_SIZE] = {0};
+	char ports[20], buf[B_SIZE] = {0};
+	struct ifaddrs *ifaddr, *ifa;
+	int p1,p2, bSfd, lSfd, i, msg_code;
+	struct sockaddr_in my_addr, peer_addr;
+	socklen_t pa_size;//peer address size
+	string rfile, sfile;
+
+	//inspired by https://gist.github.com/qxj/5618237
+	if(getifaddrs(&ifaddr) < 0)
+		exitFunc(1, "Error on get ifaddrs\n");
+
+	for(ifa = ifaddr; ifa != NULL; ifa = ifa->ifa_next){
+		if((ifa->ifa_addr != NULL) && (strcmp(ifa->ifa_name, ifname) == 0) && (ifa->ifa_addr->sa_family == AF_INET)){
+			ipaddr = inet_ntoa(((struct sockaddr_in *)ifa->ifa_addr)->sin_addr);
+			break;
+		}
+	}
+	//free allocated memory
+	freeifaddrs(ifaddr);
+
+	//create message for PORT command for server
+	string addrString(ipaddr);
+	//replace all dots with commas
+	replace(addrString.begin(), addrString.end(), '.', ',');
+	//divide port number
+	p1 = data_port/256;	
+	p2 = data_port % 256;
+	//create PORT x,x,x,x,x,x message
+	sprintf(ports, ",%d,%d\r\n", p1, p2);
+	addrString = "PORT "+addrString+ports;
+	strncpy(mPort, addrString.c_str(), sizeof(mPort));
+
+	//create socket
+	if((bSfd = socket(AF_INET, SOCK_STREAM, 0)) < 0)
+		exitFunc(1,"Failed to create socket to bind\n");
+
+	//allocate memory
+	memset(&my_addr, 0, sizeof(struct sockaddr_in));
+	//define options
+	my_addr.sin_family = AF_INET;
+	my_addr.sin_port = htons(data_port);
+	my_addr.sin_addr.s_addr = inet_addr(ipaddr);
+
+	//bind on local port for listening to server
+	if(bind(bSfd, (struct sockaddr *)&my_addr, sizeof(struct sockaddr)) < 0)
+		exitFunc(1, "Failed to bind to a local port\n");
+
+	//listen
+	if(listen(bSfd, 50) < 0)
+		exitFunc(1, "Error on listening\n");
+
+	//send PORT message to server via control channel
+	if(send(cSfd, mPort, strlen(mPort),0) < 0){
+			cout << "PORT send on connection channel: " << strerror(1) << "\n";
+			exitFunc(1, "Server error on sending PORT on CCH\n");
+	}
+	msg_code = recvMsg(cSfd, buf);
+	if(msg_code != 200)
+		exitFunc(1, "PORT wasn't received correctly\n");
+
+	/****************************************************************************************/
+	//create and initialize commands
+	char setBinary[M_SIZE] = {0};
+	char file[B_SIZE] = {0};
+	char mStor[M_SIZE] = {0};
+	char mRet[M_SIZE] = {0};
+	char mNLst[M_SIZE_SHORT] = {0};
+
+	strncpy(setBinary, "TYPE I\r\n", sizeof(setBinary));	//set flag to binary
+
+	if(upld == true || dwld == true){
+		if(file_path != NULL){
+			if(upld){
+				string sfile;
+				sfile = "STOR "+path+searched_file+"\r\n"; //create stor command with path
+				strncpy(file, searched_file.c_str(), sizeof(file));
+				strncpy(mStor, sfile.c_str(), sizeof(mStor));
+			}
+			else{	
+				string rfile;
+				rfile = "RETR "+searched_file+"\r\n";
+
+				string tmp_str;
+				tmp_str = path+searched_file;
+				strncpy(file, tmp_str.c_str(), sizeof(file));
+				strncpy(mRet, rfile.c_str(), sizeof(mRet));
+			}
+		}		
+		else{
+			if(upld){
+				string sfile;
+				sfile = "STOR "+searched_file+"\r\n"; //store command without path
+				strncpy(mStor, sfile.c_str(), sizeof(mStor));
+			}
+			else{
+				string rfile;
+				rfile = "RETR "+searched_file+"\r\n";
+				strncpy(mRet, rfile.c_str(), sizeof(mRet));
+			}
+			strncpy(file, searched_file.c_str(), sizeof(file));			
+		}
+	}
+	else
+		strncpy(mNLst, "NLST\r\n", sizeof(mNLst));
+
+	/****************************************************************************************/
+	//send command to server
+	if(upld){
+		cout << "Upload of file in active mode\n";
+	}
+	/****************************************************************************************/
+	else if(dwld){
+		cout << "DOwnload of file in active mode\n";	
+	}
+	/****************************************************************************************/
+	else if((upld == false)&&(dwld == false)&&(rmv == false)){
+		cout << "Print out directories\n";
+	}
+	/****************************************************************************************/
+
+	close(bSfd);
+
+}		
+
+/********************************************************************************************
+*********************************************************************************************
+*********************************************************************************************/
 int srvCommConnect(){
 	struct sockaddr_in address;
 	struct hostent *name;
 	int sfd, msg_code;
+	string dfile,fpath;
 	char buffer[B_SIZE] = {0};
-
-	string dfile = "DELE "+searched_file+"\r\n";
-	string usrstr = "USER "+login.uname+"\r\n";
-	string pswstr = "PASS "+login.psswd+"\r\n";
 
 	//initialize arrays
 	char mDel[M_SIZE] = {0};
@@ -287,6 +510,35 @@ int srvCommConnect(){
 	char mPass[M_SIZE] = {0};
 	char mPasv[M_SIZE_SHORT] = {0};
 	char mQuit[M_SIZE_SHORT] = {0};
+
+	if(file_path != NULL){
+		string tmp;
+
+		string path(file_path);
+		tmp = path.substr(0,1);
+		//check if path starts with '/', if not add it to beginning of string
+		if (tmp.compare("/") != 0){
+			path = "/"+path;
+		}
+		tmp = path.substr(path.size() - 1);
+		if (tmp.compare("/") != 0){
+			path = path+"/";
+		}
+
+		//add path to the searched file
+		dfile = "DELE "+path+searched_file+"\r\n";
+
+		fpath = path;
+	}
+
+	else{
+		//file should be inside foor directory
+		dfile = "DELE "+searched_file+"\r\n";
+	}
+
+	string usrstr = "USER "+login.uname+"\r\n";
+	string pswstr = "PASS "+login.psswd+"\r\n";
+	
 	//fill arrays with proper info
 	strncpy(mDel, dfile.c_str(), sizeof(mDel));
 	strncpy(mUser, usrstr.c_str(), sizeof(mUser));
@@ -335,6 +587,30 @@ int srvCommConnect(){
 		if(msg_code != 230)
 			exitFunc(1, "Wrong user name or password\n");
 	}
+	
+
+	//DELE doesnt need data channel open - so if wanted, proceed now
+	if(rmv){
+		if(send(sfd, mDel, strlen(mDel),0) < 0){
+			cout << "Command DELE send: " << strerror(1) << "\n";
+			exitFunc(1, "Server error on sending DELE\n");
+		}
+		msg_code = recvMsg(sfd, buffer);
+		if(msg_code != 250)
+			exitFunc(1, "File does not exists, or you don't have rights for deletion\n");
+		else{
+			if(send(sfd, mQuit, strlen(mQuit),0) < 0){
+				cout << "Logging out: " << strerror(1) << "\n";
+				exitFunc(1, "QUIT wasnt send correctly \n");
+			}
+			msg_code = recvMsg(sfd, buffer);
+			if(msg_code != 221)
+				exitFunc(1, "Failed to close connection \n");
+			//close socket
+			close(sfd);
+			exitFunc(0, "Deletion and log out successful\n");
+		}
+	}
 
 	//if active mode wasnt chosen work in passive
 	if (!active){
@@ -346,8 +622,9 @@ int srvCommConnect(){
 		if(msg_code != 227)
 			exitFunc(1, "Could not enter passive mode\n");
 		//establish data connection in passive mode
-		pasvDataConnect(name, sfd);
+		pasvDataConnect(name, sfd, fpath);
 	}
+	else actDataConnect(sfd, fpath);
 
 	if(send(sfd, mQuit, strlen(mQuit),0) < 0){
 		cout << "Logging out: " << strerror(1) << "\n";
@@ -368,7 +645,6 @@ int srvCommConnect(){
 
 int main(int argc, char *argv[]){
 
-	ifstream file;
 
 	optParser(argc,argv);
 	//open input file containing autentization details
@@ -378,15 +654,6 @@ int main(int argc, char *argv[]){
 
 	getLogInf(); //get login info
 	//structure login now holds login informations
-
-	//check if file for upload exists and is valid file
-	if(upld){		
-		file.open(searched_file.c_str(), ios::in);
-		if(!file.is_open()){
-			exitFunc(1, "Searched file is not valid file\n");
-		}
-		file.close();
-	}
 
 	//connect to server
 	srvCommConnect();

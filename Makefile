@@ -6,8 +6,8 @@ RESULT = fclient
 #LOGIN = 
 #FILES = Makefile proj.cpp README manual.pdf
 
-$(RESULT): $(PROJECT)
-	$(CC) $(CFLAGS) $(SRC) -o $(RESULT)
+$(RESULT): $(SRC)
+	$(CC) $(CFLAGS) -o $(RESULT) $(SRC)
 
 clean:
 	rm -f *~
