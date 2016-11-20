@@ -1,7 +1,6 @@
-FTP client
-
-Klara Mihalikova <xmihal05>
-Datum: 20.11.2016
+Projekt:	FTP client
+Autor:		Klara Mihalikova <xmihal05>
+Datum: 		20.11.2016
 
 Popis programu:
 	Program FTP client implementuje sluzbu FTP pre prenos suborov po sieti. Aplikacia by mala pracovat v aktivnom a pasivnom mode a mala by byt schopna nahrat/zmazat dany subor zo servera, stiahnut subor zo servera do pocitaca a vypisat adresarovu strukturu. 

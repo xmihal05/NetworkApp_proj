@@ -1,4 +1,7 @@
-
+/*
+	project - FTP client
+	Author: Klara Mihalikova <xmihal05>
+*/
 
 #include <cstdlib>
 #include <cstdio>
@@ -50,12 +53,12 @@ struct dataSrvInfo
 	int port;
 } psvData;
 
-void exitFunc(int number, string output);
+void exitFunc(int number, string output, int cSfd, int dSfd);
 void printHelp();
 int optParser(int argc, char *argv[]);
 void getLogInf();
-int srvCommConnect();
+int recvMsg(int sockfd, void *buf);
 void pasvDataConnect(struct hostent *name, int cSfd, string path);
 void actDataConnect (int cSfd, string path);
-int recvMsg(int sockfd, void *buf);
-void printDIR(struct hostent *name, char mNLst[], char mPasv[], char setBinary[], string line, int cSfd);
+int srvCommConnect();
+//void printDIR(struct hostent *name, char mNLst[], char mPasv[], char setBinary[], string line, int cSfd);
