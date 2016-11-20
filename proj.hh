@@ -58,3 +58,4 @@ int srvCommConnect();
 void pasvDataConnect(struct hostent *name, int cSfd, string path);
 void actDataConnect (int cSfd, string path);
 int recvMsg(int sockfd, void *buf);
+void printDIR(struct hostent *name, char mNLst[], char mPasv[], char setBinary[], string line, int cSfd);

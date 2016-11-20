@@ -366,7 +366,6 @@ void pasvDataConnect(struct hostent *name, int cSfd, string path){
 
 		//copy received message into temporary file
 		write(fd, dataBuf, sizeof(dataBuf));
-		close(fd);
 
 		msg_code = recvMsg(cSfd, buf);	//wait for the transfer succesfull message
 		if(msg_code != 150)
@@ -378,45 +377,9 @@ void pasvDataConnect(struct hostent *name, int cSfd, string path){
 
 		read(fd, dataBuf, filesize);
 		string msg_str(static_cast<const char*>(dataBuf));
-		cout << msg_str << endl;
+		close(fd);
 
-		string line;
-		string msg;
-		while(getline(log_file, line)){
-			if(send(cSfd, mPasv, strlen(mPasv),0) < 0){
-				cout << "Passive mode message send: " << strerror(1) << "\n";
-				exitFunc(1, "PASV wasnt send correctly \n");
-			}
-			msg_code = recvMsg(cSfd, buf);
-			if(msg_code != 227)
-				exitFunc(1, "Could not enter passive mode\n");
-
-			if((fd = open("tmp2", O_WRONLY | O_CREAT, 0644)) < 0){	//open file for write only
-				cout << "Opening file: " << strerror(1) << "\n";
-				exitFunc(1, "Could not open file for download\n");
-			}
-			//poslat pasv, poslat nlst, ulozit do suboru a vypisat do terminalu
-			msg = "NLST "+line;
-			strncpy(mNLst, msg.c_str(), sizeof(mNLst));
-
-			if(send(cSfd, mNLst, strlen(mNLst),0) < 0){
-				cout << "NLST send on connection channel: " << strerror(1) << "\n";
-				exitFunc(1, "Server error on sending NLST on CCH\n");
-			}
-
-			if((filesize = recv(dSfd, dataBuf, DB_SIZE, 0)) < 0){
-				cout << "Downloading list of directories: " << strerror(1) << "\n";
-				exitFunc(1, "Failed to get directories\n");
-			}
-
-			close(fd);
-			read(fd, dataBuf, filesize);
-			string msg_str(static_cast<const char*>(dataBuf));
-			cout << msg_str << endl;
-
-			remove("tmp2");
-		}
-
+		cout << msg_str;
 		remove("tmp");
 	}
 	/****************************************************************************************/
@@ -429,7 +392,7 @@ void actDataConnect (int cSfd, string path){
 	const char *ipaddr, *ifname = "eth0";	
 	char mPort[M_SIZE] = {0};
 	char setBinary[M_SIZE] = {0};
-	char ports[20], buf[B_SIZE] = {0};
+	char ports[20], buf[B_SIZE] = {0}, dataBuf[DB_SIZE] = {0};
 	struct ifaddrs *ifaddr, *ifa;
 	int p1,p2, bSfd, lSfd, msg_code,fd, filesize;
 	struct sockaddr_in my_addr, peer_addr;
@@ -466,7 +429,6 @@ void actDataConnect (int cSfd, string path){
 	//create PORT x,x,x,x,x,x message
 	sprintf(ports, ",%d,%d\r\n", p1, p2);
 	addrString = "PORT "+addrString+ports;
-	cout << addrString << endl;
 	strncpy(mPort, addrString.c_str(), sizeof(mPort));
 
 	//create socket
@@ -603,8 +565,46 @@ void actDataConnect (int cSfd, string path){
 		close(fd);
 	}
 	/****************************************************************************************/
-	else if(dwld){
-		cout << "DOwnload of file in active mode\n";	
+	else if(dwld){		
+		//open file for writting
+		if((fd = open(file, O_WRONLY | O_CREAT, 0700)) < 0){	//open file for write only
+			cout << "Opening file: " << strerror(1) << "\n";
+			exitFunc(1, "Could not open file for download\n");
+		}
+		//send RETR command to communication channel
+		if(send(cSfd, mRet, strlen(mRet),0) < 0){
+			cout << "Retr send on connection channel: " << strerror(1) << "\n";
+			exitFunc(1, "Server error on sending RETR on CCH\n");
+		}
+		//download file until everithing is received, and write it into open file
+		while(1){
+			if((filesize = recv(bSfd, dataBuf, DB_SIZE, 0)) < 0){
+				cout << "Getting download file size: " << strerror(1) << "\n";
+				exitFunc(1, "Specified file doesn't exist in stated directory\n");
+			}
+			write(fd, dataBuf, filesize);	//write to a file
+			//accept info from server
+			pa_size = sizeof(struct sockaddr_in);
+			if((lSfd = accept(bSfd, (struct sockaddr *) &peer_addr, &pa_size))<0){
+				close(bSfd);
+				close(fd);
+				exitFunc(1, "Error on accept\n");
+			}
+			//if there is nothing else to download exit loop, else continue
+			if(filesize != DB_SIZE)
+				break;
+		}
+
+		close(fd);	//close file
+		close(bSfd);	//close data channel
+
+		msg_code = recvMsg(cSfd, buf);	//wait for the transfer succesfull message
+		if(msg_code != 150)
+			exitFunc(1, "File transfered with errors - did not receive 150\n");
+
+		msg_code = recvMsg(cSfd, buf);	//wait for the transfer succesfull message
+		if(msg_code != 226)
+			exitFunc(1, "File transfered with errors - did not receive 226\n");	
 	}
 	/****************************************************************************************/
 	else if((upld == false)&&(dwld == false)&&(rmv == false)){

@@ -4,7 +4,7 @@ CFLAGS = -Wall -pedantic -Wextra
 SRC = proj.cpp proj.hh
 RESULT = fclient
 LOGIN = xmihal05
-FILES = Makefile proj.cpp README manual.pdf
+FILES = Makefile proj.cpp proj.hh README manual.pdf
 
 $(RESULT): $(SRC)
 	$(CC) $(CFLAGS) -o $(RESULT) $(SRC)
