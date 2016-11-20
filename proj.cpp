@@ -6,9 +6,13 @@
 #include "proj.hh"
 
 #define CM_PORT 21		//port for FTP command flow
-#define B_SIZE 1024		//size of buffer for messages received from server
+#define B_SIZE 1024
+#define DB_SIZE 4096		//size of buffer for messages received from server
 #define M_SIZE 250		//size of messages send to server from client
 #define M_SIZE_SHORT 20 //size of short messages send to server from client
+
+#define MAX_PATHNAME_LEN 260
+#define NUM_THREADS 5
 
 using namespace std;
 
@@ -161,11 +165,7 @@ int recvMsg(int sockfd, void *buf){
 
 	//save message received from server into buffer
 	if((tmp = recv(sockfd, buf, B_SIZE, 0)) < 0)
-			exitFunc(1, "Error on receive\n");/*
-	while(tmp > 0){
-		if((tmp = recv(sockfd, buf, B_SIZE, 0)) < 0)
 			exitFunc(1, "Error on receive\n");
-	}	*/
 
 	//cast buffer from void * to string
 	string msg_str(static_cast<const char*>(buf));
@@ -197,6 +197,7 @@ int recvMsg(int sockfd, void *buf){
 void pasvDataConnect(struct hostent *name, int cSfd, string path){
 	int dSfd, msg_code, fd, filesize;
 	char buf[B_SIZE] = {0};
+	char dataBuf[DB_SIZE] = {0};
 	struct sockaddr_in dataAddr;
 	struct stat obj;
 
@@ -205,7 +206,9 @@ void pasvDataConnect(struct hostent *name, int cSfd, string path){
 	char mStor[M_SIZE] = {0};
 	char mRet[M_SIZE] = {0};
 	char mNLst[M_SIZE_SHORT] = {0};
+	char mPasv[M_SIZE_SHORT] = {0};
 
+	strncpy(mPasv, "PASV\r\n", sizeof(mPasv));	
 	strncpy(setBinary, "TYPE I\r\n", sizeof(setBinary));	//set flag to binary
 
 	if(upld == true || dwld == true){
@@ -221,7 +224,7 @@ void pasvDataConnect(struct hostent *name, int cSfd, string path){
 				rfile = "RETR "+searched_file+"\r\n";
 
 				string tmp_str;
-				tmp_str = path+searched_file;
+				tmp_str = "~"+path+searched_file;
 				strncpy(file, tmp_str.c_str(), sizeof(file));
 				strncpy(mRet, rfile.c_str(), sizeof(mRet));
 			}
@@ -308,58 +311,113 @@ void pasvDataConnect(struct hostent *name, int cSfd, string path){
 	/****************************************************************************************/
 	//download file from server
 	else if(dwld){
-		//INSPIRED BY: http://armi.in/wiki/FTP_Server_and_Client_Implementation_in_C/C%2B%2B
+		//open file for writting
+		if((fd = open(file, O_WRONLY | O_CREAT, 0700)) < 0){	//open file for write only
+			cout << "Opening file: " << strerror(1) << "\n";
+			exitFunc(1, "Could not open file for download\n");
+		}
 		//send RETR command to communication channel
 		if(send(cSfd, mRet, strlen(mRet),0) < 0){
 			cout << "Retr send on connection channel: " << strerror(1) << "\n";
 			exitFunc(1, "Server error on sending RETR on CCH\n");
 		}
-		//download file from server via data channel
-		if(recv(dSfd, &filesize, sizeof(int), 0) < 0){
-			cout << "Getting download file size: " << strerror(1) << "\n";
-			exitFunc(1, "Specified file doesn't exist in stated directory\n");
+		//download file until everithing is received, and write it into open file
+		while(1){
+			if((filesize = recv(dSfd, dataBuf, DB_SIZE, 0))< 0){
+				cout << "Getting download file size: " << strerror(1) << "\n";
+				exitFunc(1, "Specified file doesn't exist in stated directory\n");
+			}
+			write(fd, dataBuf, filesize);	//write to a file
+			//if there is nothing else to download exit loop, else continue
+			if(filesize != DB_SIZE)
+				break;
 		}
-		//read file into buffer
-		if(recv(cSfd, buf, B_SIZE, 0) < 0){
-			cout << "Downloading file: " << strerror(1) << "\n";
-			exitFunc(1, "Failed to receive file\n");			
-		}
-		//problem s permission?! who knows... -_-
-		if((fd = open(file, O_CREAT | O_EXCL | O_WRONLY, 0666)) < 0){	//open file for write only
-			exitFunc(1, "Could not open file for download\n");
-		}
-		write(fd, buf, filesize);	//write to a file
+
 		close(fd);	//close file
 		close(dSfd);	//close data channel
 
 		msg_code = recvMsg(cSfd, buf);	//wait for the transfer succesfull message
+		if(msg_code != 150)
+			exitFunc(1, "File transfered with errors - did not receive 150\n");
+
+		msg_code = recvMsg(cSfd, buf);	//wait for the transfer succesfull message
 		if(msg_code != 226)
 			exitFunc(1, "File transfered with errors - did not receive 226\n");
+		
 	}
 
 	/****************************************************************************************/
 	//print out all the directories and subdirectories
 	else if((upld == false)&&(dwld == false)&&(rmv == false)){
-		//INSPIRED BY: http://armi.in/wiki/FTP_Server_and_Client_Implementation_in_C/C%2B%2B
+		if((fd = open("tmp", O_WRONLY | O_CREAT, 0644)) < 0){	//open file for write only
+			cout << "Opening file: " << strerror(1) << "\n";
+			exitFunc(1, "Could not open file for download\n");
+		}
+		//send NLST command
 		if(send(cSfd, mNLst, strlen(mNLst),0) < 0){
 			cout << "NLST send on connection channel: " << strerror(1) << "\n";
 			exitFunc(1, "Server error on sending NLST on CCH\n");
 		}
-		msg_code = recvMsg(cSfd, buf);
-		if (msg_code == 150)
-			exitFunc(1, "NLST exits with errors\n");
 
-		if(recv(dSfd, buf, B_SIZE, 0) < 0){
+		if((filesize = recv(dSfd, dataBuf, DB_SIZE, 0)) < 0){
 			cout << "Downloading list of directories: " << strerror(1) << "\n";
 			exitFunc(1, "Failed to get directories\n");
 		}
 
-		if((fd = open("tmp.txt", O_WRONLY)) < 0)
-			exitFunc(1, "Couldnt open temporary file for directory list\n");
 		//copy received message into temporary file
-		write(fd, buf, sizeof(buf));
+		write(fd, dataBuf, sizeof(dataBuf));
 		close(fd);
-		system("cat tmp.txt");
+
+		msg_code = recvMsg(cSfd, buf);	//wait for the transfer succesfull message
+		if(msg_code != 150)
+			exitFunc(1, "File transfered with errors - did not receive 150\n");
+
+		msg_code = recvMsg(cSfd, buf);	//wait for the transfer succesfull message
+		if(msg_code != 226)
+			exitFunc(1, "File transfered with errors - did not receive 226\n");
+
+		read(fd, dataBuf, filesize);
+		string msg_str(static_cast<const char*>(dataBuf));
+		cout << msg_str << endl;
+
+		string line;
+		string msg;
+		while(getline(log_file, line)){
+			if(send(cSfd, mPasv, strlen(mPasv),0) < 0){
+				cout << "Passive mode message send: " << strerror(1) << "\n";
+				exitFunc(1, "PASV wasnt send correctly \n");
+			}
+			msg_code = recvMsg(cSfd, buf);
+			if(msg_code != 227)
+				exitFunc(1, "Could not enter passive mode\n");
+
+			if((fd = open("tmp2", O_WRONLY | O_CREAT, 0644)) < 0){	//open file for write only
+				cout << "Opening file: " << strerror(1) << "\n";
+				exitFunc(1, "Could not open file for download\n");
+			}
+			//poslat pasv, poslat nlst, ulozit do suboru a vypisat do terminalu
+			msg = "NLST "+line;
+			strncpy(mNLst, msg.c_str(), sizeof(mNLst));
+
+			if(send(cSfd, mNLst, strlen(mNLst),0) < 0){
+				cout << "NLST send on connection channel: " << strerror(1) << "\n";
+				exitFunc(1, "Server error on sending NLST on CCH\n");
+			}
+
+			if((filesize = recv(dSfd, dataBuf, DB_SIZE, 0)) < 0){
+				cout << "Downloading list of directories: " << strerror(1) << "\n";
+				exitFunc(1, "Failed to get directories\n");
+			}
+
+			close(fd);
+			read(fd, dataBuf, filesize);
+			string msg_str(static_cast<const char*>(dataBuf));
+			cout << msg_str << endl;
+
+			remove("tmp2");
+		}
+
+		remove("tmp");
 	}
 	/****************************************************************************************/
 }
@@ -367,28 +425,42 @@ void pasvDataConnect(struct hostent *name, int cSfd, string path){
 /********************************************************************************************
 *********************************************************************************************
 *********************************************************************************************/
+void *actMessage(void *threadid){
+	
+}
+/********************************************************************************************
+*********************************************************************************************
+*********************************************************************************************/
 void actDataConnect (int cSfd, string path){
 	const char *ipaddr, *ifname = "eth0";	
 	char mPort[M_SIZE] = {0};
+	char setBinary[M_SIZE] = {0};
 	char ports[20], buf[B_SIZE] = {0};
 	struct ifaddrs *ifaddr, *ifa;
-	int p1,p2, bSfd, lSfd, i, msg_code;
+	int p1,p2, bSfd, lSfd, msg_code,fd, filesize;
 	struct sockaddr_in my_addr, peer_addr;
 	socklen_t pa_size;//peer address size
 	string rfile, sfile;
+	struct stat obj;
 
-	//inspired by https://gist.github.com/qxj/5618237
-	if(getifaddrs(&ifaddr) < 0)
-		exitFunc(1, "Error on get ifaddrs\n");
+	strncpy(setBinary, "TYPE I\r\n", sizeof(setBinary));	//message for setting flag to binary
 
-	for(ifa = ifaddr; ifa != NULL; ifa = ifa->ifa_next){
-		if((ifa->ifa_addr != NULL) && (strcmp(ifa->ifa_name, ifname) == 0) && (ifa->ifa_addr->sa_family == AF_INET)){
-			ipaddr = inet_ntoa(((struct sockaddr_in *)ifa->ifa_addr)->sin_addr);
-			break;
+	if((strcmp(server_no, "localhost") == 0) || (strcmp(server_no,"127.0.0.1") == 0))
+			ipaddr = "127.0.0.1";
+	else{
+		//inspired by https://gist.github.com/qxj/5618237
+		if(getifaddrs(&ifaddr) < 0)
+			exitFunc(1, "Error on get ifaddrs\n");
+
+		for(ifa = ifaddr; ifa != NULL; ifa = ifa->ifa_next){
+			if((ifa->ifa_addr != NULL) && (strcmp(ifa->ifa_name, ifname) == 0) && (ifa->ifa_addr->sa_family == AF_INET)){
+				ipaddr = inet_ntoa(((struct sockaddr_in *)ifa->ifa_addr)->sin_addr);
+				break;
+			}
 		}
+		//free allocated memory
+		freeifaddrs(ifaddr);
 	}
-	//free allocated memory
-	freeifaddrs(ifaddr);
 
 	//create message for PORT command for server
 	string addrString(ipaddr);
@@ -400,6 +472,7 @@ void actDataConnect (int cSfd, string path){
 	//create PORT x,x,x,x,x,x message
 	sprintf(ports, ",%d,%d\r\n", p1, p2);
 	addrString = "PORT "+addrString+ports;
+	cout << addrString << endl;
 	strncpy(mPort, addrString.c_str(), sizeof(mPort));
 
 	//create socket
@@ -414,12 +487,23 @@ void actDataConnect (int cSfd, string path){
 	my_addr.sin_addr.s_addr = inet_addr(ipaddr);
 
 	//bind on local port for listening to server
-	if(bind(bSfd, (struct sockaddr *)&my_addr, sizeof(struct sockaddr)) < 0)
+	if(bind(bSfd, (struct sockaddr *)&my_addr, sizeof(struct sockaddr)) < 0){
+		close(bSfd);
 		exitFunc(1, "Failed to bind to a local port\n");
+	}
 
 	//listen
 	if(listen(bSfd, 50) < 0)
 		exitFunc(1, "Error on listening\n");
+
+	//Turn the binary flag on
+	if(send(cSfd, setBinary, strlen(setBinary), 0) < 0){		
+			cout << "Set binary: " << strerror(1) << "\n";
+			exitFunc(1, "Setting binary flag on failed\n");
+	}
+	msg_code = recvMsg(cSfd, buf);
+	if(msg_code != 200)
+		exitFunc(1, "Could not set binary flag on\n");
 
 	//send PORT message to server via control channel
 	if(send(cSfd, mPort, strlen(mPort),0) < 0){
@@ -432,13 +516,10 @@ void actDataConnect (int cSfd, string path){
 
 	/****************************************************************************************/
 	//create and initialize commands
-	char setBinary[M_SIZE] = {0};
 	char file[B_SIZE] = {0};
 	char mStor[M_SIZE] = {0};
 	char mRet[M_SIZE] = {0};
 	char mNLst[M_SIZE_SHORT] = {0};
-
-	strncpy(setBinary, "TYPE I\r\n", sizeof(setBinary));	//set flag to binary
 
 	if(upld == true || dwld == true){
 		if(file_path != NULL){
@@ -478,7 +559,54 @@ void actDataConnect (int cSfd, string path){
 	/****************************************************************************************/
 	//send command to server
 	if(upld){
-		cout << "Upload of file in active mode\n";
+		//check if file for upload exists and is valid file
+		fd = open(file, O_RDONLY);	//SKUSIT PRIDAT NEJAKU PERMISSION!!!
+		if(fd < 0){
+			exitFunc(1, "Searched file is not valid file or does not exists\n");
+		}
+
+		//send STOR command to communication channel
+		if(send(cSfd, mStor, strlen(mStor),0) < 0){
+			cout << "Storee send on connection channel: " << strerror(1) << "\n";
+			close(bSfd);
+			close(fd);
+			exitFunc(1, "Server error on sending STOR on CCH\n");
+		}
+		//get size of a file
+		stat(file, &obj);	
+		filesize = obj.st_size;
+		//receive return code from server
+		msg_code = recvMsg(cSfd, buf);
+		if(msg_code != 150){
+			close(bSfd);
+			exitFunc(1, "File transfer with errors - did not receive 150\n");
+		}
+		//send file via data channel
+		if(sendfile(bSfd, fd, NULL, filesize) < 0){			
+			cout << "Sending file via data channel: " << strerror(1) << "\n";
+			close(bSfd);
+			close(fd);
+			exitFunc(1, "Error on sending file via data channel\n");
+		}
+		cout << "teraz som tu\n";
+
+		//accept info from server
+		pa_size = sizeof(struct sockaddr_in);
+		if((lSfd = accept(bSfd, (struct sockaddr *) &peer_addr, &pa_size))<0){
+			close(bSfd);
+			close(fd);
+			exitFunc(1, "Error on accept\n");
+		}
+		cout << "som tu\n";
+
+		msg_code = recvMsg(cSfd, buf);	//wait for the transfer succesfull message
+		if(msg_code != 226){
+			close(bSfd);
+			close(fd);
+			exitFunc(1, "File transfered with errors - did not receive 226\n");
+		}
+
+		close(fd);
 	}
 	/****************************************************************************************/
 	else if(dwld){
@@ -543,7 +671,7 @@ int srvCommConnect(){
 	strncpy(mDel, dfile.c_str(), sizeof(mDel));
 	strncpy(mUser, usrstr.c_str(), sizeof(mUser));
 	strncpy(mPass, pswstr.c_str(), sizeof(mPass));
-	strncpy(mPasv, "PASV\r\n", sizeof(mPasv));
+	strncpy(mPasv, "PASV\r\n", sizeof(mPasv));	
 	strncpy(mQuit, "QUIT\r\n", sizeof(mQuit));
 
 	sfd = socket(AF_INET, SOCK_STREAM, 0);	

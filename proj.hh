@@ -10,12 +10,13 @@
 #include <fcntl.h>
 #include <sstream>
 #include <algorithm>
+#include <pthread.h>
 
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <sys/sendfile.h>	//upload file to server
-#include <sys/stat.h>	//for getting file size
+#include <sys/stat.h>	
 #include <netinet/in.h>
 #include <netdb.h>
 #include <arpa/inet.h>
