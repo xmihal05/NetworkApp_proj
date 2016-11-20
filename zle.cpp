@@ -194,13 +194,114 @@ int recvMsg(int sockfd, void *buf){
 *********************************************************************************************
 *********************************************************************************************/
 
+void printDIR(struct hostent *name, char mNLst[], char mPasv[], char setBinary[], string line, int cSfd){
+	int dSfd, msg_code, fd, filesize;
+	struct sockaddr_in dataAddr;
+	char dataBuf[DB_SIZE] = {0};
+	char buf[B_SIZE] = {0};
+	char mCwd[M_SIZE] = {0};
+	string tmp, tmp2, msg;
+
+	//create data socket
+	if((dSfd = socket(AF_INET, SOCK_STREAM, 0)) < 0)
+		exitFunc(1, "Data socket create error\n");
+
+	bzero((char *) &dataAddr, sizeof(dataAddr));	//memory init - sets all values to zero
+	dataAddr.sin_family = AF_INET;
+	bcopy((char *)name->h_addr, (char *)&dataAddr.sin_addr.s_addr, name->h_length);
+	//send passive mode message
+	if(send(cSfd, mPasv, M_SIZE,0) < 0){
+		cout << "Passive mode message send: " << strerror(1) << "\n";
+		exitFunc(1, "PASV wasnt send correctly \n");
+	}
+	msg_code = recvMsg(cSfd, buf);
+	if(msg_code != 227)
+		exitFunc(1, "Could not enter passive mode\n");
+	//connect to data stream from passive mode message
+	dataAddr.sin_port = htons(psvData.port);
+	if(connect(dSfd, (struct sockaddr *)&dataAddr, sizeof(dataAddr)) < 0){
+		cout << "connect: " << strerror(1) << "\n";
+		exitFunc(1, "Failed to connect to a server\n");	//if connection cant be established - exit with error
+	}
+
+	if((fd = open("tmp2", O_WRONLY | O_CREAT, 0644)) < 0){	//open file for write only
+		cout << "Opening file: " << strerror(1) << "\n";
+		exitFunc(1, "Could not open file for download\n");
+	}
+	//poslat pasv, poslat nlst, ulozit do suboru a vypisat do terminalu
+	msg = "NLST "+line+"\r\n";
+	strncpy(mNLst, msg.c_str(), M_SIZE);
+
+	if(send(cSfd, mNLst, M_SIZE,0) < 0){
+		cout << "NLST send on connection channel: " << strerror(1) << "\n";
+		exitFunc(1, "Server error on sending NLST on CCH\n");
+	}
+
+	if((filesize = recv(dSfd, dataBuf, DB_SIZE, 0)) < 0){
+		cout << "Downloading list of directories: " << strerror(1) << "\n";
+		exitFunc(1, "Failed to get directories\n");
+	}
+	//write to a file
+	write(fd, dataBuf, sizeof(dataBuf));
+
+	msg_code = recvMsg(cSfd, buf);	//wait for the transfer succesfull message
+	if(msg_code != 150)
+		exitFunc(1, "File transfered with errors - did not receive 150\n");
+
+	msg_code = recvMsg(cSfd, buf);	//wait for the transfer succesfull message
+	if(msg_code != 226)
+		exitFunc(1, "File transfered with errors - did not receive 226\n");
+
+	read(fd, dataBuf, filesize);		
+	string msg_str(static_cast<const char*>(dataBuf));
+	close(fd);
+	close(dSfd);
+
+	istringstream stream(msg_str);
+	while(getline(stream, tmp)){
+		tmp2 = line+"/"+tmp;
+		cout << tmp2 << endl;
+		//create cwd message
+		msg = "CWD /"+tmp+"\r\n";
+		strncpy(mCwd, msg.c_str(), M_SIZE);
+		//send message to find out if tmp2 is directory
+		if(send(cSfd, mCwd, M_SIZE,0) < 0){
+			cout << "CWD send on connection channel: " << strerror(1) << "\n";
+			exitFunc(1, "Server error on sending CWD on CCH\n");
+		}
+		msg_code = recvMsg(cSfd, buf);	//wait for the transfer succesfull message
+		if (msg_code == 250){	//ak je adresar
+			//go back to directory
+			msg = "CDUP\r\n";
+			strncpy(mCwd, msg.c_str(), M_SIZE);
+			//send message to find out if tmp2 is directory
+			if(send(cSfd, mCwd, strlen(mCwd),0) < 0){
+				cout << "CDUP send on connection channel: " << strerror(1) << "\n";
+				exitFunc(1, "Server error on sending CDUP on CCH\n");
+			}
+			msg_code = recvMsg(cSfd, buf);
+			if(msg_code == 200){
+				cout << tmp2 << "is directory\n";
+				printDIR(name, mNLst, mPasv, setBinary, tmp2, cSfd);	//volaj rekurzivne funkciu				
+			}
+			continue;
+		}
+		else continue;	//inak po vypisani iba pokracuj na dalsi riadok
+	}
+
+	remove("tmp2");
+}
+
+/********************************************************************************************
+*********************************************************************************************
+*********************************************************************************************/
+
 void pasvDataConnect(struct hostent *name, int cSfd, string path){
 	int dSfd, msg_code, fd, filesize;
 	char buf[B_SIZE] = {0};
 	char dataBuf[DB_SIZE] = {0};
 	struct sockaddr_in dataAddr;
 	struct stat obj;
-	const char *filename;
 
 	char setBinary[M_SIZE] = {0};
 	char file[B_SIZE] = {0};
@@ -225,9 +326,8 @@ void pasvDataConnect(struct hostent *name, int cSfd, string path){
 				rfile = "RETR "+searched_file+"\r\n";
 
 				string tmp_str;
-				tmp_str = path+searched_file;
-				tmp_str = tmp_str.substr(1);
-				filename = tmp_str.c_str();
+				tmp_str = "~"+path+searched_file;
+				strncpy(file, tmp_str.c_str(), sizeof(file));
 				strncpy(mRet, rfile.c_str(), sizeof(mRet));
 			}
 		}		
@@ -242,8 +342,7 @@ void pasvDataConnect(struct hostent *name, int cSfd, string path){
 				rfile = "RETR "+searched_file+"\r\n";
 				strncpy(mRet, rfile.c_str(), sizeof(mRet));
 			}
-			strncpy(file, searched_file.c_str(), sizeof(file));	
-			filename = searched_file.c_str();		
+			strncpy(file, searched_file.c_str(), sizeof(file));			
 		}
 	}
 	else
@@ -315,12 +414,10 @@ void pasvDataConnect(struct hostent *name, int cSfd, string path){
 	//download file from server
 	else if(dwld){
 		//open file for writting
-		FILE * dFile;
-		if((dFile = fopen(filename, "w")) == NULL){
-			cout << "Creating file for writting: " << strerror(1) << "\n";
-			exitFunc(1, "Error while creating file\n");
+		if((fd = open(file, O_WRONLY | O_CREAT, 0700)) < 0){	//open file for write only
+			cout << "Opening file: " << strerror(1) << "\n";
+			exitFunc(1, "Could not open file for download\n");
 		}
-
 		//send RETR command to communication channel
 		if(send(cSfd, mRet, strlen(mRet),0) < 0){
 			cout << "Retr send on connection channel: " << strerror(1) << "\n";
@@ -332,15 +429,13 @@ void pasvDataConnect(struct hostent *name, int cSfd, string path){
 				cout << "Getting download file size: " << strerror(1) << "\n";
 				exitFunc(1, "Specified file doesn't exist in stated directory\n");
 			}
-			//cast to string
-			string msg_str(static_cast<const char*>(dataBuf));
-			fputs(msg_str.c_str(), dFile); //write into file
+			write(fd, dataBuf, filesize);	//write to a file
 			//if there is nothing else to download exit loop, else continue
 			if(filesize != DB_SIZE)
 				break;
 		}
 
-		fclose(dFile);	//close file
+		close(fd);	//close file
 		close(dSfd);	//close data channel
 
 		msg_code = recvMsg(cSfd, buf);	//wait for the transfer succesfull message
@@ -386,7 +481,13 @@ void pasvDataConnect(struct hostent *name, int cSfd, string path){
 		string msg_str(static_cast<const char*>(dataBuf));
 		close(fd);
 
-		cout << msg_str;
+		istringstream stream(msg_str);
+		string line;
+		while(getline(stream, line)){
+			cout << line << endl;
+			printDIR(name, mNLst, mPasv, setBinary, line, cSfd);
+		}
+
 		remove("tmp");
 	}
 	/****************************************************************************************/
