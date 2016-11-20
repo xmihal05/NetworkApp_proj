@@ -1,0 +1,43 @@
+FTP client
+
+Klara Mihalikova <xmihal05>
+Datum: 20.11.2016
+
+Popis programu:
+	Program FTP client implementuje sluzbu FTP pre prenos suborov po sieti. Aplikacia by mala pracovat v aktivnom a pasivnom mode a mala by byt schopna nahrat/zmazat dany subor zo servera, stiahnut subor zo servera do pocitaca a vypisat adresarovu strukturu. 
+
+	Implementacia programu nebola dokoncena. Pri aktivnom rezime nefunguje nahranie a stiahnutie suboru a vypis adresarovej struktury. Pri pasivnom vypis adresarovej struktury.
+
+Zoznam suborov:
+	Makefile
+	proj.cpp
+	proj.hh
+	README
+	manual.pdf
+
+Prikazy Makefilu:
+	make 		(prelozi program a vytvori spustitelny subor)
+	make clean	(odstrani subory vytvorene pri preklade pomocou "make")
+	make tar	(vytvori kompresovany archiv xmihal05.tar)
+	make rmtar	(odstrani kompresovany archiv)
+
+Preklad:
+	g++ -Wall -pedantic -Wextra -o fclient proj.cpp proj.hh
+
+Run:
+	./fclient -h 	vypise napovedu
+
+	./fclient -s <192.168.1.102> -c <credentials.txt> [-p]|[-a <port_number>] 
+		[-d|-u|-r <filename>] [-P <path>]
+
+	Parametre -s a -c su povinne. Parametre -a a -p su nekombinovatelne, rovnako tak parametre -d,-u a -r. Parameter -P moze byt pouzity iba v kombinacii s jednym s parametrov -d,-u alebo -r.
+
+Vysvetlenie jednotlivych parametrov:
+	-s 		urcuje ip adresu alebo domenove meno FTP servera
+	-c 		urcuje subor s prihlasovacimi udajmi klienta pre pripojenie k serveru
+	-p 		pasivny rezim
+	-a 		prenasa port na ktorom bude prebiehat aktivny datovy prenos
+	-d 		nesie nazov suboru, ktory bude zo serveru stiahnuty
+	-u 		nesie nazov suboru, ktory bude na server nahrany
+	-r 		urcuje nazov suboru, ktory bude zo serveru zmazany
+	-P 		obsahuje cestu k suboru uvedeneho v parametroch -d,-u alebo -r

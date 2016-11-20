@@ -10,7 +10,6 @@
 #include <fcntl.h>
 #include <sstream>
 #include <algorithm>
-#include <pthread.h>
 
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -22,7 +21,6 @@
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <ifaddrs.h>
-
 
 using namespace std;
 
